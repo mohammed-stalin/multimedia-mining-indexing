@@ -5,7 +5,7 @@ import numpy as np
 image = cv2.imread('fondvert.png')
 
 # Load the new background image
-background = cv2.imread('back.jpg')  # Replace with your background image
+background = cv2.imread('newback.jpeg')  # Replace with your background image
 
 # Ensure the background is the same size as the input image
 background = cv2.resize(background, (image.shape[1], image.shape[0]))
