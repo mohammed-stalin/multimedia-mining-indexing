@@ -14,12 +14,12 @@ hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 # Create a window and trackbars for adjusting HSV ranges
 cv2.namedWindow('Image')
 
-cv2.createTrackbar('H Lower', 'Image', 0, 179, nothing)
-cv2.createTrackbar('H Upper', 'Image', 179, 179, nothing)
-cv2.createTrackbar('S Lower', 'Image', 0, 255, nothing)
-cv2.createTrackbar('S Upper', 'Image', 255, 255, nothing)
-cv2.createTrackbar('V Lower', 'Image', 0, 255, nothing)
-cv2.createTrackbar('V Upper', 'Image', 255, 255, nothing)
+cv2.createTrackbar('H Lower', 'Image', 61, 61, nothing)
+cv2.createTrackbar('H Upper', 'Image', 69, 69, nothing)
+cv2.createTrackbar('S Lower', 'Image', 73, 73, nothing)
+cv2.createTrackbar('S Upper', 'Image', 241, 241, nothing)
+cv2.createTrackbar('V Lower', 'Image', 94, 94, nothing)
+cv2.createTrackbar('V Upper', 'Image', 234, 234, nothing)
 
 while True:
     # Get current positions of the trackbars
