@@ -76,6 +76,7 @@ Compute and display histograms for each color channel in each image. This gives 
 ### Step 3: Calculate and Display Dominant Colors
 
 Identify and display dominant colors for each image using KMeans clustering. This can help in identifying the primary color themes present in the images.
+![Alt text](output-1.png)
 
 ### Step 4: Calculate Similarity Distances
 
@@ -93,8 +94,11 @@ Display the top 5 most similar image pairs based on each similarity metric (hist
 ## Results
 
 - **Histogram-based similarity**: Measures similarity based on color distribution.
+  ![Alt text](output1.png)
 - **Dominant color-based similarity**: Measures similarity based on prominent colors in each image.
+ ![Alt text](output2.png)
 - **Global metric**: A combination of both histogram and dominant color distances.
+  ![Alt text](output3.png)
 
 The project outputs sorted lists of similar image pairs and displays them for visual analysis.
 
