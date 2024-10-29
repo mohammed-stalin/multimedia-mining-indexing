@@ -71,7 +71,7 @@ Load images from the specified directory, showing the paths of all loaded images
 ### Step 2: Calculate and Display Color Histograms
 
 Compute and display histograms for each color channel in each image. This gives an understanding of the color distribution across RGB channels.
-![Alt text](devoir\output0.png)
+![Alt text](output0.png)
 
 ### Step 3: Calculate and Display Dominant Colors
 
