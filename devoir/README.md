@@ -204,4 +204,3 @@ plot_similar_images(top_global, selected_image_path, "Top Similar Images by Glob
 This project is licensed under the MIT License.
 
 ---
-
