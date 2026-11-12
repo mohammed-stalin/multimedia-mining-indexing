@@ -1,0 +1,15 @@
+# Image processing labs (arithmetic-operations, color_space, lab1-lab6, devoir)
+opencv-python>=4.8
+numpy>=1.24
+matplotlib>=3.7
+scikit-learn>=1.3
+scipy>=1.10
+Pillow>=10.0
+
+# 3D / OpenGL labs (lab7, devoir_indiv2)
+glfw>=2.6
+PyOpenGL>=3.1.7
+pyrr>=0.10.3
+
+# Notebooks
+jupyter
