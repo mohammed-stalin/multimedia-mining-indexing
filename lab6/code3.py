@@ -1,90 +1,155 @@
-import numpy as np
+"""Lab 6 - Interactive marker-based watershed segmentation.
+
+Draw markers on the objects you want to separate (one marker label per
+object), then run the watershed ("ligne de partage des eaux") algorithm.
+The background marker is created automatically from a thresholded and
+dilated version of the image.
+
+Controls (in the drawing window)
+    left mouse drag  draw with the current marker
+    n                next marker (new label, new colour)
+    + / -            increase / decrease brush thickness
+    w or Space       run watershed and show the result (you can keep drawing)
+    c                clear all markers
+    s                save the last segmentation next to the image
+    q or Esc         quit (runs the watershed one last time)
+
+Usage:
+    python code3.py [image]
+"""
+import argparse
+from pathlib import Path
+
 import cv2 as cv
-from random import randrange
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+DRAW_WINDOW = "Dessinez vos marqueurs"
+RESULT_WINDOW = "Segmentation"
+
+rng = np.random.default_rng(0)
 
 
-drawing = False  
-ix, iy = -1, -1  # Coordonnées du début du trait du marquer
-current_marker = 1  # Marqueur courant (étiquette)
-color = (0, 255, 0)  # Couleur initiale (vert)
-thickness = 1  # Épaisseur du trait par défaut
-markers = None  # Tableau pour stocker les marqueurs
-colors = []  # Couleurs aléatoires pour chaque marqueur
+def random_color():
+    return tuple(int(c) for c in rng.integers(50, 256, size=3))
 
 
-img = cv.imread('C:/Users/lenovo/Desktop/multimedia-mining-indexing/lab6/coins.png')
-original_img = img.copy()  # Copie pour réinitialisation
-gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-ret, thresh = cv.threshold(gray, 100, 255, cv.THRESH_BINARY)
+def background_mask(image, dilate_iterations=12):
+    """Sure-background mask: pixels far from any foreground object.
 
-# Préparation des marqueurs (tableu de meme taille de l'image)
-markers = np.zeros_like(gray, dtype=np.int32)
-
-# Couleurs aléatoires pour chaque marqueur
-colors = [[randrange(256), randrange(256), randrange(256)] for _ in range(10)]
-
-# Fonction pour dessiner des contours interactifs
-def draw_marker(event, x, y, flags, param):
-    global img, drawing, ix, iy, current_marker, thickness
-
-    #lorsque left button est cliqué
-    if event == cv.EVENT_LBUTTONDOWN:
-        drawing = True
-        ix, iy = x, y
-
-    #mise a jour des coordonnes lorsque la sourie en mvt
-    elif event == cv.EVENT_MOUSEMOVE and drawing:
-        cv.line(img, (ix, iy), (x, y), color, thickness)
-        cv.line(markers, (ix, iy), (x, y), current_marker, thickness)
-        ix, iy = x, y
-
-    #lorsque left button est laché
-    elif event == cv.EVENT_LBUTTONUP:
-        drawing = False
-        cv.line(img, (ix, iy), (x, y), color, thickness)
-        cv.line(markers, (ix, iy), (x, y), current_marker, thickness)
+    Otsu threshold, inverted automatically when the background is bright,
+    then dilated: what stays at 0 is safely background.
+    """
+    gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    _, thresh = cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+    if np.count_nonzero(thresh) > thresh.size / 2:  # objects are dark on bright bg
+        thresh = cv.bitwise_not(thresh)
+    kernel = np.ones((3, 3), np.uint8)
+    fg_dilated = cv.dilate(thresh, kernel, iterations=dilate_iterations)
+    return fg_dilated == 0
 
 
-cv.namedWindow('Dessinez vos marqueurs')
-cv.setMouseCallback('Dessinez vos marqueurs', draw_marker)
+class WatershedApp:
+    def __init__(self, image):
+        self.original = image
+        self.sure_background = background_mask(image)
+        self.result = None
+        self.reset()
 
-while True:
-    cv.imshow('Dessinez vos marqueurs', img)
-    k = cv.waitKey(1) & 0xFF
+    def reset(self):
+        self.canvas = self.original.copy()
+        self.markers = np.zeros(self.original.shape[:2], dtype=np.int32)
+        self.label = 1
+        self.colors = {1: random_color()}
+        self.thickness = 3
+        self.drawing = False
+        self.last = (-1, -1)
 
-    if k == ord('q'):  # Quitter
-        break
-    elif k == ord('c'):  # Réinitialiser
-        img = original_img.copy()
-        markers = np.zeros_like(gray, dtype=np.int32)
-    elif k == ord('n'):  # Changer de marqueur
-        current_marker += 1
-        color = (randrange(256), randrange(256), randrange(256))
-    elif k == ord('+'):  # Augmenter l'épaisseur
-        thickness += 1
-    elif k == ord('-') and thickness > 1:  # Diminuer l'épaisseur
-        thickness -= 1
+    # ------------------------------------------------------------------ mouse
+    def on_mouse(self, event, x, y, flags, param):
+        if event == cv.EVENT_LBUTTONDOWN:
+            self.drawing = True
+            self.last = (x, y)
+        elif event == cv.EVENT_MOUSEMOVE and self.drawing:
+            self._stroke(x, y)
+        elif event == cv.EVENT_LBUTTONUP and self.drawing:
+            self._stroke(x, y)
+            self.drawing = False
 
-cv.destroyWindow('Dessinez vos marqueurs')
+    def _stroke(self, x, y):
+        color = self.colors[self.label]
+        cv.line(self.canvas, self.last, (x, y), color, self.thickness)
+        cv.line(self.markers, self.last, (x, y), self.label, self.thickness)
+        self.last = (x, y)
 
-# Appliquer l'algorithme Ligne de partage des eaux
-markers[markers > 0] += 1  # Décaler les marqueurs pour éviter les conflits avec le fond
-kernel = np.ones((3, 3), np.uint8)
-fond = cv.dilate(thresh, kernel, iterations=12)
-markers[fond == 0] = 1
+    # -------------------------------------------------------------- watershed
+    def segment(self):
+        if self.markers.max() == 0:
+            print("Draw at least one marker first.")
+            return None
 
-# Algorithme Ligne de partage des eaux
-markers_watershed = cv.watershed(original_img, markers)
+        markers = self.markers.copy()
+        markers[markers > 0] += 1                  # user labels start at 2
+        markers[self.sure_background & (markers == 0)] = 1  # label 1 = background
+        markers = cv.watershed(self.original, markers)
 
-# Générer l'image segmentée
-result = np.zeros_like(original_img)
-for label in range(2, markers_watershed.max() + 1):
-    result[markers_watershed == label] = colors[label % len(colors)]
+        result = np.zeros_like(self.original)
+        for label in range(2, markers.max() + 1):
+            result[markers == label] = self.colors.get(label - 1, (255, 255, 255))
+        result[markers == -1] = (0, 0, 255)       # boundaries in red (BGR)
 
-# Marquer les lignes de partage des eaux en rouge
-result[markers_watershed == -1] = [255, 0, 0]
+        overlay = cv.addWeighted(self.original, 0.5, result, 0.5, 0)
+        overlay[markers == -1] = (0, 0, 255)
+        self.result = np.hstack([result, overlay])
+        cv.imshow(RESULT_WINDOW, self.result)
+        return self.result
 
-# Affichage du résultat
-cv.imshow('Segmentation', result)
-cv.waitKey(0)
-cv.destroyAllWindows()
+    # ------------------------------------------------------------------- loop
+    def run(self, save_path):
+        cv.namedWindow(DRAW_WINDOW)
+        cv.setMouseCallback(DRAW_WINDOW, self.on_mouse)
+        print(__doc__.split("Usage:")[0])
+
+        while True:
+            cv.imshow(DRAW_WINDOW, self.canvas)
+            k = cv.waitKey(20) & 0xFF
+
+            if k in (ord("q"), 27):
+                break
+            elif k == ord("c"):
+                self.reset()
+            elif k == ord("n"):
+                self.label += 1
+                self.colors[self.label] = random_color()
+                print(f"Marker {self.label}")
+            elif k in (ord("+"), ord("=")):
+                self.thickness += 1
+            elif k == ord("-") and self.thickness > 1:
+                self.thickness -= 1
+            elif k in (ord("w"), ord(" ")):
+                self.segment()
+            elif k == ord("s") and self.result is not None:
+                cv.imwrite(str(save_path), self.result)
+                print(f"Saved {save_path}")
+
+        cv.destroyWindow(DRAW_WINDOW)
+        if self.segment() is not None:
+            cv.waitKey(0)
+        cv.destroyAllWindows()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("image", nargs="?", default=HERE / "coins.png")
+    args = parser.parse_args()
+
+    img = cv.imread(str(args.image))
+    if img is None:
+        raise FileNotFoundError(f"Could not read image: {args.image}")
+
+    save_path = Path(args.image).with_name(Path(args.image).stem + "_segmented.png")
+    WatershedApp(img).run(save_path)
+
+
+if __name__ == "__main__":
+    main()
