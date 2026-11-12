@@ -1,37 +1,62 @@
-import numpy as np
-import cv2
+"""Interactive cross-fade between two images using a trackbar.
 
-def f(x):
-    pass
+    c = (1 - alpha) * a + alpha * b          with alpha in [0, 1]
+
+Usage:
+    python addition2.py [image1] [image2]
+Move the "Alpha" slider to blend. Press Esc or q to quit.
+"""
+import argparse
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+ASSETS = Path(__file__).resolve().parent.parent / "assets"
+WINDOW = "addition"
+
+
+def load_image(path):
+    img = cv2.imread(str(path))
+    if img is None:
+        raise FileNotFoundError(f"Could not read image: {path}")
+    return img
+
+
+def blend(a, b, alpha_percent):
+    alpha = alpha_percent / 100.0
+    return np.uint8((1.0 - alpha) * a + alpha * b)
+
 
 def main():
-    #read the two images 
-    img1='../assets/mountain.jpg'
-    img2='../assets/rose.jpg'
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("image1", nargs="?", default=ASSETS / "mountain.jpg")
+    parser.add_argument("image2", nargs="?", default=ASSETS / "rose.jpg")
+    args = parser.parse_args()
 
-    a=cv2.imread(img1)
-    b=cv2.imread(img2)
-    #initialize alpha
-    alpha=0
+    a = load_image(args.image1)
+    b = load_image(args.image2)
+    # Pixel-wise arithmetic requires identical shapes
+    b = cv2.resize(b, (a.shape[1], a.shape[0]))
 
-    c=np.uint8((1-alpha/100.)*a+(alpha/100.)*b)
+    cv2.namedWindow(WINDOW)
+    cv2.createTrackbar("Alpha", WINDOW, 0, 100, lambda _: None)
 
-    cv2.imshow('addition',c)
-
-    #tracebare between 0 and 100 
-    cv2.namedWindow('addition')  # Create a named window
-    cv2.createTrackbar('Alpha:','addition',0,100,f)
-
+    alpha = -1
     while True:
-        if cv2.getTrackbarPos('Alpha:','addition') != alpha:
-            # Get the current position of the trackbar
-            alpha = cv2.getTrackbarPos('Alpha:','addition')
+        pos = cv2.getTrackbarPos("Alpha", WINDOW)
+        if pos != alpha:
+            alpha = pos
+            cv2.imshow(WINDOW, blend(a, b, alpha))
 
-            c=np.uint8((1-alpha/100.)*a+(alpha/100.)+b)
-            cv2.imshow('addition',c)
-            
-        if cv2.waitKey(0) & 0xFF==27:
+        key = cv2.waitKey(30) & 0xFF  # non-blocking so the slider stays responsive
+        if key in (27, ord("q")):
             break
+        if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+            break
+
     cv2.destroyAllWindows()
-if __name__=="__main__":
+
+
+if __name__ == "__main__":
     main()
