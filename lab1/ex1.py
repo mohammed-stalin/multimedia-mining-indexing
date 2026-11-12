@@ -1,46 +1,75 @@
+"""Exercise 1 - Interactive HSV thresholding.
+
+Tune the six trackbars (H/S/V lower & upper bounds) to isolate the green
+background of `fondvert.png`. The binary mask and the masked image are
+shown side by side. When you quit, the final bounds are printed so they can
+be reused in ex2.py.
+
+OpenCV HSV ranges: H in [0, 179], S in [0, 255], V in [0, 255].
+
+Usage:
+    python ex1.py [image]
+Press Esc or q to quit.
+"""
+import argparse
+from pathlib import Path
+
 import cv2
 import numpy as np
 
-# Callback function for trackbars (we don't need it but it's required by createTrackbar)
-def nothing(x):
-    pass
+HERE = Path(__file__).resolve().parent
+WINDOW = "HSV threshold"
 
-# Load the image
-image = cv2.imread('fondvert.png')  # Replace with your image file
+# (name, initial value, max value)
+TRACKBARS = [
+    ("H Lower", 35, 179),
+    ("H Upper", 85, 179),
+    ("S Lower", 40, 255),
+    ("S Upper", 255, 255),
+    ("V Lower", 40, 255),
+    ("V Upper", 255, 255),
+]
 
-# Convert the image to HSV
-hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-# Create a window and trackbars for adjusting HSV ranges
-cv2.namedWindow('Image')
+def read_bounds():
+    values = [cv2.getTrackbarPos(name, WINDOW) for name, _, _ in TRACKBARS]
+    h_lo, h_hi, s_lo, s_hi, v_lo, v_hi = values
+    return np.array([h_lo, s_lo, v_lo]), np.array([h_hi, s_hi, v_hi])
 
-cv2.createTrackbar('H Lower', 'Image', 61, 61, nothing)
-cv2.createTrackbar('H Upper', 'Image', 69, 69, nothing)
-cv2.createTrackbar('S Lower', 'Image', 73, 73, nothing)
-cv2.createTrackbar('S Upper', 'Image', 241, 241, nothing)
-cv2.createTrackbar('V Lower', 'Image', 94, 94, nothing)
-cv2.createTrackbar('V Upper', 'Image', 234, 234, nothing)
 
-while True:
-    # Get current positions of the trackbars
-    h_lower = cv2.getTrackbarPos('H Lower', 'Image')
-    h_upper = cv2.getTrackbarPos('H Upper', 'Image')
-    s_lower = cv2.getTrackbarPos('S Lower', 'Image')
-    s_upper = cv2.getTrackbarPos('S Upper', 'Image')
-    v_lower = cv2.getTrackbarPos('V Lower', 'Image')
-    v_upper = cv2.getTrackbarPos('V Upper', 'Image')
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("image", nargs="?", default=HERE / "fondvert.png")
+    args = parser.parse_args()
 
-    # Define the lower and upper range for HSV
-    lower_hsv = np.array([h_lower, s_lower, v_lower])
-    upper_hsv = np.array([h_upper, s_upper, v_upper])
+    image = cv2.imread(str(args.image))
+    if image is None:
+        raise FileNotFoundError(f"Could not read image: {args.image}")
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    # Create the binary mask
-    mask = cv2.inRange(hsv_image, lower_hsv, upper_hsv)
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    for name, initial, maximum in TRACKBARS:
+        cv2.createTrackbar(name, WINDOW, initial, maximum, lambda _: None)
 
-    # Display the binary image
-    cv2.imshow('Image', mask)
+    while True:
+        lower, upper = read_bounds()
+        mask = cv2.inRange(hsv_image, lower, upper)
+        masked = cv2.bitwise_and(image, image, mask=mask)
 
-    if cv2.waitKey(1) & 0xFF == 27:  # Press 'Esc' to exit
-        break
+        preview = np.hstack([cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR), masked])
+        cv2.imshow(WINDOW, preview)
 
-cv2.destroyAllWindows()
+        key = cv2.waitKey(30) & 0xFF
+        if key in (27, ord("q")):
+            break
+        if cv2.getWindowProperty(WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+            break
+
+    lower, upper = read_bounds()
+    print(f"lower_hsv = np.array({lower.tolist()})")
+    print(f"upper_hsv = np.array({upper.tolist()})")
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
