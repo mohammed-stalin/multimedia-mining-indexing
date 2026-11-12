@@ -1,176 +1,98 @@
+"""Mesh simplification by vertex clustering (Rossignac & Borrel).
+
+1. Overlay a uniform 3D grid on the bounding box of the mesh.
+2. All vertices falling in the same cell are merged into one representative
+   vertex (the mean of the cell's vertices).
+3. Faces are re-indexed; faces that become degenerate (two corners in the
+   same cell) and duplicate faces are removed.
+
+The grid can be given either as an absolute cell size (`grid_size`) or as a
+number of cells along the longest side of the bounding box (`resolution`),
+which is independent of the model's units and therefore easier to tune.
+
+Usage:
+    python vertex_clustering.py [input.obj] [-r RESOLUTION | -g GRID_SIZE] [-o output.obj]
+"""
+import argparse
+from pathlib import Path
+
 import numpy as np
-from read_obj import read_obj
+
+from obj_io import mesh_stats, read_obj, write_obj
+
+HERE = Path(__file__).resolve().parent
 
 
-def create_grid(vertices, grid_size):
-    """
-    Creates a 3D grid for vertex clustering.
-
-    :param vertices: List of (x, y, z) vertex coordinates
-    :param grid_size: Size of each grid cell
-    :return: Dictionary mapping grid cells to lists of vertex indices
-    """
-    grid = {}
-    for vertex_index, vertex in enumerate(vertices):
-        cell_coord = calculate_cell(vertex, grid_size)
-        grid.setdefault(cell_coord, []).append(vertex_index)
-    return grid
+def cell_size_from_resolution(vertices, resolution):
+    extent = vertices.max(axis=0) - vertices.min(axis=0)
+    return float(extent.max()) / resolution
 
 
-def calculate_cell(vertex, grid_size):
-    """Calculates the grid cell coordinates for a given vertex."""
-    return tuple(int(coord // grid_size) for coord in vertex)
+def vertex_clustering(obj_data, grid_size=None, resolution=None):
+    """Return a NEW simplified mesh dict (the input is not modified)."""
+    if (grid_size is None) == (resolution is None):
+        raise ValueError("Give exactly one of grid_size or resolution")
 
+    vertices = np.asarray(obj_data["vertices"], dtype=np.float64)
+    if grid_size is None:
+        grid_size = cell_size_from_resolution(vertices, resolution)
 
-def compute_representative_vertex(vertices, vertex_indices):
-    """
-    Computes the representative vertex for a cell by averaging all vertices in it.
+    # Step 1: integer cell coordinates of every vertex
+    origin = vertices.min(axis=0)
+    cells = np.floor((vertices - origin) / grid_size).astype(np.int64)
 
-    :param vertices: List of all vertices
-    :param vertex_indices: List of vertex indices in the cell
-    :return: (x, y, z) coordinates of representative vertex
-    """
-    cell_vertices = [vertices[idx] for idx in vertex_indices]
-    return tuple(np.mean(cell_vertices, axis=0))
+    # Step 2: one representative (mean) vertex per non-empty cell
+    _, old_to_new, counts = np.unique(cells, axis=0, return_inverse=True, return_counts=True)
+    old_to_new = old_to_new.ravel()
+    sums = np.zeros((len(counts), 3))
+    np.add.at(sums, old_to_new, vertices)
+    new_vertices = sums / counts[:, None]
 
+    # Step 3: re-index faces, drop degenerate and duplicate triangles
+    new_faces, seen = [], set()
+    for face in obj_data["faces"]:
+        new_face = [(int(old_to_new[v]), vt, vn) for v, vt, vn in face]
+        ids = [c[0] for c in new_face]
+        if len(set(ids)) < 3:
+            continue
+        key = frozenset(ids)
+        if key in seen:
+            continue
+        seen.add(key)
+        new_faces.append(new_face)
 
-def vertex_clustering(obj_data, grid_size):
-    """
-    Performs vertex clustering simplification on the mesh.
-
-    :param obj_data: Dictionary containing mesh data from read_obj
-    :param grid_size: Size of grid cells for clustering
-    :return: Dictionary with simplified mesh data
-    """
-    # Step 1: Create grid and map vertices to cells
-    grid = create_grid(obj_data['vertices'], grid_size)
-
-    # Step 2: Compute new vertices and map old indices to new ones
-    new_vertices, old_to_new_index = build_new_vertices(grid, obj_data['vertices'])
-
-    # Step 3: Create new faces using the new vertex indices
-    new_faces = create_new_faces(obj_data['faces'], old_to_new_index)
-
-    # Step 4: Construct the simplified mesh data
     return {
-        'vertices': new_vertices,
-        'textures': obj_data['textures'],
-        'normals': obj_data['normals'],
-        'faces': new_faces,
+        "vertices": [tuple(v) for v in new_vertices],
+        "textures": obj_data["textures"],
+        "normals": obj_data["normals"],
+        "faces": new_faces,
     }
 
 
-def build_new_vertices(grid, vertices):
-    """
-    Builds a new vertex list and maps old indices to new indices.
-
-    :param grid: Grid mapping cells to vertex indices
-    :param vertices: List of original vertices
-    :return: (List of new vertices, Mapping of old indices to new indices)
-    """
-    new_vertices = []
-    old_to_new_index = {}
-
-    for cell, vertex_indices in grid.items():
-        new_vertex = compute_representative_vertex(vertices, vertex_indices)
-        new_index = len(new_vertices)
-        new_vertices.append(new_vertex)
-
-        for old_index in vertex_indices:
-            old_to_new_index[old_index] = new_index
-
-    return new_vertices, old_to_new_index
-
-
-def create_new_faces(faces, old_to_new_index):
-    """
-    Reconstructs faces using the new vertex indices.
-
-    :param faces: Original list of faces
-    :param old_to_new_index: Mapping of old vertex indices to new indices
-    :return: List of new faces
-    """
-    new_faces = []
-
-    for face in faces:
-        new_face = [
-            (old_to_new_index[v_idx], vt_idx, vn_idx)
-            for v_idx, vt_idx, vn_idx in face
-        ]
-
-        # Only add face if all vertices are unique (to prevent degenerate faces)
-        if len(set(v[0] for v in new_face)) >= 3:
-            new_faces.append(new_face)
-
-    return new_faces
-
-
-def write_obj(data, output_path):
-    """
-    Writes mesh data to an OBJ file.
-
-    :param data: Dictionary containing mesh data
-    :param output_path: Path to output OBJ file
-    """
-    with open(output_path, 'w') as file:
-        # Write vertices
-        for vertex in data['vertices']:
-            file.write(f'v {vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f}\n')
-
-        # Write texture coordinates
-        for texture in data['textures']:
-            file.write(f'vt {texture[0]:.6f} {texture[1]:.6f}\n')
-
-        # Write normals
-        for normal in data['normals']:
-            file.write(f'vn {normal[0]:.6f} {normal[1]:.6f} {normal[2]:.6f}\n')
-
-        # Write faces
-        for face in data['faces']:
-            file.write(format_face(face) + '\n')
-
-
-def format_face(face):
-    """
-    Formats a face for writing to an OBJ file.
-
-    :param face: List of (vertex_idx, texture_idx, normal_idx) tuples
-    :return: Formatted string for the face
-    """
-    face_str = 'f'
-    for v_idx, vt_idx, vn_idx in face:
-        if vt_idx is not None and vn_idx is not None:
-            face_str += f' {v_idx+1}/{vt_idx+1}/{vn_idx+1}'
-        elif vt_idx is not None:
-            face_str += f' {v_idx+1}/{vt_idx+1}'
-        else:
-            face_str += f' {v_idx+1}'
-    return face_str
-
-
 def main():
-    """
-    Main function to perform vertex clustering on a given OBJ file.
-    """
-    input_path = 'DVI2/obj3.obj'
-    output_path = 'simplified.obj'
-    grid_size = 0.1  # Adjust this value to control the level of simplification
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("input", nargs="?", default=HERE / "DVI2" / "obj3.obj")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-r", "--resolution", type=int, help="cells along the longest bbox side (default 30)")
+    group.add_argument("-g", "--grid-size", type=float, help="absolute cell size in model units")
+    parser.add_argument("-o", "--output", help="output OBJ (default: <input>_clustered.obj in results/)")
+    args = parser.parse_args()
 
-    # Read input mesh
-    obj_data = read_obj(input_path)
+    if args.resolution is None and args.grid_size is None:
+        args.resolution = 30
 
-    # Perform vertex clustering
-    simplified_data = vertex_clustering(obj_data, grid_size)
+    obj_data = read_obj(args.input)
+    simplified = vertex_clustering(obj_data, grid_size=args.grid_size, resolution=args.resolution)
 
-    # Write simplified mesh
-    write_obj(simplified_data, output_path)
+    output = Path(args.output) if args.output else HERE / "results" / f"{Path(args.input).stem}_clustered.obj"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    write_obj(simplified, output)
 
-    # Print statistics
-    print(f"Original vertices: {len(obj_data['vertices'])}")
-    print(f"Simplified vertices: {len(simplified_data['vertices'])}")
-    print(f"Original faces: {len(obj_data['faces'])}")
-    print(f"Simplified faces: {len(simplified_data['faces'])}")
+    (v0, f0), (v1, f1) = mesh_stats(obj_data), mesh_stats(simplified)
+    print(f"Original   : {v0} vertices, {f0} faces")
+    print(f"Simplified : {v1} vertices, {f1} faces ({f1 / f0:.1%} of the faces kept)")
+    print(f"Written to {output}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
